@@ -534,6 +534,7 @@ protected:
     ContextWeakMutablePtr query_context;
     ContextWeakMutablePtr session_context;  /// Session context or nullptr. Could be equal to this.
     ContextWeakMutablePtr global_context;   /// Global context. Could be equal to this.
+    ContextMutablePtr background_context; /// TODO: comment
 
     /// XXX: move this stuff to shared part instead.
     ContextMutablePtr buffer_context;  /// Buffer context. Could be equal to this.
@@ -1172,6 +1173,9 @@ public:
         auto ptr = global_context.lock();
         return ptr && ptr.get() == this;
     }
+
+    ContextMutablePtr getBackgroundContext() const;
+    bool hasBackgroundContext() const { return background_context != nullptr; }
 
     ContextMutablePtr getBufferContext() const;
 
