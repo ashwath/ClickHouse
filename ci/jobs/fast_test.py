@@ -14,9 +14,13 @@ from ci.praktika.utils import MetaClasses, Shell, Utils
 current_directory = Utils.cwd()
 temp_dir = f"{current_directory}/ci/tmp"
 build_dir = f"{temp_dir}/build_fast"
-# Mount ./ci/tmp/build to provide stable, readable paths in binary symbols
-build_dir_link = "/ClickHouse"
-assert os.path.isdir(build_dir_link), f"Expected directory not found: {build_dir_link}"
+
+# Repository mounted to root to provide stable, readable paths in binary symbols
+repo_path_normalized = "/ClickHouse"
+build_path_normalized = f"{repo_path_normalized}/build"
+assert os.path.isdir(
+    repo_path_normalized
+), f"Expected directory not found: {repo_path_normalized}"
 
 
 def clone_submodules():
@@ -141,6 +145,11 @@ def main():
     os.environ["SCCACHE_ERROR_LOG"] = f"{build_dir}/sccache.log"
     os.environ["SCCACHE_LOG"] = "info"
 
+    os.makedirs(build_dir, exist_ok=True)
+    if os.path.islink(build_path_normalized):
+        os.unlink(build_path_normalized)
+    os.symlink(build_dir, build_path_normalized)
+
     if Info().is_local_run:
         os.environ["SCCACHE_S3_NO_CREDENTIALS"] = "true"
         if clickhouse_bin_path.exists():
@@ -192,7 +201,7 @@ def main():
             #   -DCMAKE_TOOLCHAIN_FILE={current_directory}/cmake/linux/toolchain-x86_64-musl.cmake \
             Result.from_commands_run(
                 name="Cmake configuration",
-                command=f"cmake {current_directory} -DCMAKE_CXX_COMPILER={ToolSet.COMPILER_CPP} \
+                command=f"cmake {repo_path_normalized} -DCMAKE_CXX_COMPILER={ToolSet.COMPILER_CPP} \
                 -DCMAKE_C_COMPILER={ToolSet.COMPILER_C} \
                 -DCOMPILER_CACHE={ToolSet.COMPILER_CACHE} \
                 -DENABLE_LIBRARIES=0 \
@@ -200,7 +209,7 @@ def main():
                 -DENABLE_LEXER_TEST=1 \
                 -DBUILD_STRIPPED_BINARY=1 \
                 -DENABLE_JEMALLOC=1 -DENABLE_LIBURING=1 -DENABLE_YAML_CPP=1 -DENABLE_RUST=1",
-                workdir=build_dir_link,
+                workdir=build_path_normalized,
             )
         )
         res = results[-1].is_ok()
@@ -212,7 +221,7 @@ def main():
                 name="Build ClickHouse",
                 command="command time -v ninja"
                 " clickhouse-bundle clickhouse-stripped lexer_test",
-                workdir=build_dir_link,
+                workdir=build_path_normalized,
             )
         )
         Shell.check(f"{build_dir}/rust/chcache/chcache stats")
