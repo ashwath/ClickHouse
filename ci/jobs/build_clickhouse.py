@@ -1,6 +1,5 @@
 import argparse
 import os
-import shutil
 
 from ci.defs.defs import BuildTypes, ToolSet, chcache_secret
 from ci.jobs.scripts.clickhouse_version import CHVersion
@@ -11,26 +10,12 @@ from ci.praktika.utils import MetaClasses, Shell, Utils
 
 
 current_directory = Utils.cwd()
-build_dir = f"{current_directory}/ci/tmp/build"
 temp_dir = f"{current_directory}/ci/tmp"
-build_dir_link = "/tmp/build"
+build_dir = f"{temp_dir}/build"
 
-# Create /tmp/build as a symlink to build_dir for consistent path across users
-if os.path.islink(build_dir_link):
-    # Remove existing symlink if it points to a different location
-    if os.readlink(build_dir_link) != build_dir:
-        os.unlink(build_dir_link)
-        os.symlink(build_dir, build_dir_link)
-elif os.path.exists(build_dir_link):
-    # Remove existing file or directory
-    if os.path.isdir(build_dir_link):
-        shutil.rmtree(build_dir_link)
-    else:
-        os.remove(build_dir_link)
-    os.symlink(build_dir, build_dir_link)
-else:
-    # Create the symlink
-    os.symlink(build_dir, build_dir_link)
+# Mount point of ./ci/tmp/build to provide stable, readable paths in binary symbols
+build_dir_link = "/ClickHouse"
+assert os.path.isdir(build_dir_link), f"Expected directory not found: {build_dir_link}"
 
 BUILD_TYPE_TO_CMAKE = {
     BuildTypes.AMD_DEBUG: f"    cmake --debug-trycompile -DCMAKE_VERBOSE_MAKEFILE=1 -LA -DCMAKE_BUILD_TYPE=Debug -DENABLE_THINLTO=0 -DSANITIZE=          -DENABLE_CHECK_HEAVY_BUILDS=1 -DBUILD_STRIPPED_BINARY=1 -DENABLE_CLICKHOUSE_SELF_EXTRACTING=1 -DCMAKE_C_COMPILER={ToolSet.COMPILER_C} -DCMAKE_CXX_COMPILER={ToolSet.COMPILER_CPP} -DCOMPILER_CACHE={ToolSet.COMPILER_CACHE}        -DCMAKE_TOOLCHAIN_FILE={current_directory}/cmake/linux/toolchain-x86_64.cmake -DENABLE_BUILD_PROFILING=1 -DENABLE_TESTS=1 -DENABLE_LEXER_TEST=1 -DENABLE_UTILS=0 -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_SYSCONFDIR=/etc -DCMAKE_INSTALL_LOCALSTATEDIR=/var -DCMAKE_SKIP_INSTALL_ALL_DEPENDENCY=ON -DENABLE_BUZZHOUSE=1",
@@ -126,12 +111,20 @@ def main():
 
     cmake_cmd = BUILD_TYPE_TO_CMAKE[build_type]
     info = Info()
-    if not info.is_local_run:
+    # Global sccache settings for local and CI runs
+    os.environ["SCCACHE_DIR"] = f"{temp_dir}/sccache"
+    os.environ["SCCACHE_CACHE_SIZE"] = "40G"
+    os.environ["SCCACHE_IDLE_TIMEOUT"] = "7200"
+    os.environ["SCCACHE_BUCKET"] = Settings.S3_ARTIFACT_PATH
+    os.environ["SCCACHE_S3_KEY_PREFIX"] = "ccache/sccache"
+    os.environ["SCCACHE_ERROR_LOG"] = f"{build_dir}/sccache.log"
+    os.environ["SCCACHE_LOG"] = "info"
+
+    if info.is_local_run:
+        os.environ["SCCACHE_S3_NO_CREDENTIALS"] = "true"
+    else:
         # Default timeout (10min), can be too low, we run this in docker
         # anyway, will be terminated once the build is finished
-        os.environ["SCCACHE_IDLE_TIMEOUT"] = "7200"
-        os.environ["SCCACHE_BUCKET"] = Settings.S3_ARTIFACT_PATH
-        os.environ["SCCACHE_S3_KEY_PREFIX"] = "ccache/sccache"
         os.environ["CTCACHE_LOG_LEVEL"] = "debug"
         os.environ["CTCACHE_DIR"] = f"{build_dir_link}/ccache/clang-tidy-cache"
         os.environ["CTCACHE_S3_BUCKET"] = Settings.S3_ARTIFACT_PATH
@@ -267,7 +260,7 @@ def main():
                 f'echo "$(grep "exists in cache" {clang_tidy_cache_log} | wc -l) in cache\n'
                 f'$(grep "does not exist in cache" {clang_tidy_cache_log} | wc -l) not in cache"',
             )
-        run_shell("Output programs", f"ls -l {build_dir_link}/programs/", verbose=True)
+        run_shell("Output programs", f"ls -l {build_dir}/programs/", verbose=True)
         Shell.check("pwd")
         res = results[-1].is_ok()
 
