@@ -791,6 +791,11 @@ class JobConfigs:
                 parameter=f"amd_asan, flaky",
                 runs_on=RunnerLabels.AMD_MEDIUM,
                 requires=[ArtifactNames.CH_AMD_ASAN],
+            ),
+            Job.ParamSet(
+                parameter=f"arm_binary, flaky",
+                runs_on=RunnerLabels.ARM_MEDIUM,
+                requires=[ArtifactNames.CH_ARM_BINARY],
             )
         )
     )

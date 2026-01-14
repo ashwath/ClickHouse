@@ -531,6 +531,7 @@ void TCPHandler::runImpl()
         /// (i.e. deallocations from the Aggregator with two-level aggregation)
         /// Also it resets socket's timeouts.
         std::shared_ptr<QueryState> query_state;
+        auto thread_id = CurrentThread::get().thread_id;
 
         try
         {
@@ -547,6 +548,8 @@ void TCPHandler::runImpl()
                 continue;
 
             chassert(query_state);
+            LOG_DEBUG(log, "debug_marker Thread {} Going to process query with ID {}", thread_id, query_state->query_id);
+
 
             if (connectionLimitReached())
             {
@@ -775,6 +778,7 @@ void TCPHandler::runImpl()
 
             after_check_cancelled.restart();
             after_send_progress.restart();
+            bool is_peak_memory_usage_logged = false;
 
             if (query_state->io.pipeline.pushing())
             {
@@ -785,12 +789,15 @@ void TCPHandler::runImpl()
             }
             else if (query_state->io.pipeline.pulling())
             {
-                processOrdinaryQuery(*query_state);
+                LOG_DEBUG(log, "debug_marker Thread {} In query_state->io.pipeline.pulling(), Call processOrdinaryQuery()", thread_id);
+                processOrdinaryQuery(*query_state, query_scope);
+                is_peak_memory_usage_logged = true;
                 query_state->io.onFinish();
             }
             else if (query_state->io.pipeline.completed())
             {
                 {
+                    LOG_DEBUG(log, "debug_marker Thread {} In query_state->io.pipeline.completed(), Call getInteractiveCancelCallback()", thread_id);
                     CompletedPipelineExecutor executor(query_state->io.pipeline);
 
                     /// Should not check for cancel in case of input.
@@ -811,6 +818,7 @@ void TCPHandler::runImpl()
                 /// without breaking protocol compatibility, but it can be done
                 /// by increasing revision.
                 sendProgress(*query_state);
+                LOG_DEBUG(log, "debug_marker Thread {} query_state->io.pipeline.completed(), Call sendSelectProfileEvents()", thread_id);
                 sendSelectProfileEvents(*query_state);
             }
             else
@@ -823,12 +831,16 @@ void TCPHandler::runImpl()
                     create_query && create_query->isCreateQueryWithImmediateInsertSelect())
                 {
                     sendProgress(*query_state);
+                    LOG_DEBUG(log, "debug_marker Thread {} query_state->io.onFinish(), Call sendSelectProfileEvents()", thread_id);
                     sendSelectProfileEvents(*query_state);
                 }
             }
 
-            /// Do it before sending end of stream, to have a chance to show log message in client.
-            query_scope->logPeakMemoryUsage();
+            if (!is_peak_memory_usage_logged)
+            {
+                /// Do it before sending end of stream, to have a chance to show log message in client.
+                query_scope->logPeakMemoryUsage();
+            }
 
             sendLogs(*query_state);
             sendEndOfStream(*query_state);
@@ -1349,7 +1361,7 @@ void TCPHandler::processInsertQuery(QueryState & state)
 }
 
 
-void TCPHandler::processOrdinaryQuery(QueryState & state)
+void TCPHandler::processOrdinaryQuery(QueryState & state, std::optional<CurrentThread::QueryScope>& query_scope)
 {
     auto & pipeline = state.io.pipeline;
 
@@ -1396,6 +1408,8 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
                         /// Some time passed and there is a progress.
                         after_send_progress.restart();
                         sendProgress(state);
+                        auto thread_id = CurrentThread::get().thread_id;
+                        LOG_DEBUG(log, "debug_marker Thread {} In processOrdinaryQuery, Call sendSelectProfileEvents()", thread_id);
                         sendSelectProfileEvents(state);
                     }
 
@@ -1431,6 +1445,11 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
         sendProfileInfo(state, executor.getProfileInfo());
         sendProgress(state);
         sendLogs(state);
+        /// Do it before sending end of stream, to have a chance to show log message in client.
+        query_scope->logPeakMemoryUsage();
+        auto thread_id = CurrentThread::get().thread_id;
+        LOG_DEBUG(log, "debug_marker Thread {} In processOrdinaryQuery in the end, Call sendSelectProfileEvents()", thread_id);
+
         sendSelectProfileEvents(state);
 
         sendData(state, {});
@@ -1601,8 +1620,12 @@ void TCPHandler::sendProfileEvents(QueryState & state)
     if (!state.query_context->getSettingsRef()[Setting::send_profile_events])
         return;
 
+    auto thread_id = CurrentThread::get().thread_id;
+    LOG_DEBUG(log, "debug_marker Thread {} In the beginning of sendProfileEvents, getMemoryTracker()->getPeak() = {}", thread_id, CurrentThread::getMemoryTracker()->getPeak());
+
     Stopwatch stopwatch;
     Block block = ProfileEvents::getProfileEvents(host_name, state.profile_queue, state.last_sent_snapshots);
+
     if (block.rows() != 0)
     {
         initProfileEventsBlockOutput(state, block);
@@ -1617,9 +1640,11 @@ void TCPHandler::sendProfileEvents(QueryState & state)
 
         auto elapsed_milliseconds = stopwatch.elapsedMilliseconds();
         if (elapsed_milliseconds > 100)
-            LOG_DEBUG(log, "Sending profile events block with {} rows, {} bytes took {} milliseconds",
-                block.rows(), block.bytes(), elapsed_milliseconds);
+            LOG_DEBUG(log, "debug_marker Thread {} Sending profile events block with {} rows, {} bytes took {} milliseconds",
+                thread_id, block.rows(), block.bytes(), elapsed_milliseconds);
     }
+
+    LOG_DEBUG(log, "debug_marker Thread {} In the end of sendProfileEvents, getMemoryTracker()->getPeak() = {}", thread_id, CurrentThread::getMemoryTracker()->getPeak());
 }
 
 

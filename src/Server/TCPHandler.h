@@ -305,7 +305,7 @@ private:
     AsynchronousInsertQueue::PushResult processAsyncInsertQuery(QueryState & state, AsynchronousInsertQueue & insert_queue);
 
     /// Process a request that does not require the receiving of data blocks from the client
-    void processOrdinaryQuery(QueryState & state);
+    void processOrdinaryQuery(QueryState & state, std::optional<CurrentThread::QueryScope>& query_scope);
 
     void processTablesStatusRequest();
 

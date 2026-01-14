@@ -95,8 +95,8 @@ void ProgressIndication::writeFinalProgress()
 {
     std::lock_guard lock(progress_mutex);
 
-    if (progress.read_rows < 1000)
-        return;
+    // if (progress.read_rows < 1000)
+    //     return;
 
     output_stream << "Processed " << formatReadableQuantity(progress.read_rows) << " rows, "
                 << formatReadableSizeWithDecimalSuffix(progress.read_bytes);
