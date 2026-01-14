@@ -3215,6 +3215,8 @@ ContextMutablePtr Context::getGlobalContext() const
 ContextMutablePtr Context::getBackgroundContext() const
 {
     if (!background_context) throw Exception(ErrorCodes::LOGICAL_ERROR, "There is no background context");
+    /// TODO: temp tweak to support recursive handling of projections
+    background_context->background_context = background_context;
     return background_context;
 }
 
